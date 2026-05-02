@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>短信验证码获取 - 安全版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif;
+            background: linear-gradient(145deg, #eef2f9 0%, #d9e0eb 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.96);
+            border-radius: 2rem;
+            box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 480px;
+            padding: 2rem;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #1e293b, #2d3e57);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+        }
+
+        .sub {
+            text-align: center;
+            color: #5b6e8c;
+            font-size: 0.85rem;
+            margin-bottom: 2rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #e9eef3;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #1f2a44;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            font-size: 1rem;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 60px;
+            background: white;
+            transition: 0.2s;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        button {
+            width: 100%;
+            background: linear-gradient(98deg, #2563eb, #1d4ed8);
+            color: white;
+            border: none;
+            padding: 0.9rem;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 60px;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-top: 0.5rem;
+            box-shadow: 0 8px 20px -8px rgba(37, 99, 235, 0.4);
+        }
+
+        button:active {
+            transform: scale(0.97);
+        }
+
+        button:disabled {
+            background: #9aaebf;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .result {
+            margin-top: 1.5rem;
+            background: #f1f5f9;
+            border-radius: 1.2rem;
+            padding: 1rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            word-break: break-word;
+            display: none;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .success {
+            border-left: 4px solid #10b981;
+        }
+
+        .error {
+            border-left: 4px solid #ef4444;
+        }
+
+        .note {
+            text-align: center;
+            font-size: 0.7rem;
+            color: #6a7c9e;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid #e9edf2;
+        }
+
+        .loader {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h1>📱 验证码获取</h1>
+    <div class="sub">安全后端代理 · 无跨域风险</div>
+
+    <div class="input-group">
+        <label>手机号码</label>
+        <input type="tel" id="phoneInput" placeholder="请输入11位手机号" value="13812345678">
+    </div>
+
+    <button id="sendBtn">获取验证码</button>
+
+    <div id="resultBox" class="result"></div>
+    <div class="note">
+        🔒 所有敏感签名均在服务端完成，Api-Key 与 Secret 安全存储
+    </div>
+</div>
+
+<script>
+    // ==============================================
+    // ⚠️ 重要：请将下面地址替换为您在 Render 上部署的后端地址
+    // ==============================================
+    const API_BASE_URL = 'https://your-app.onrender.com';  // <--- 修改这里！
+    
+    const phoneInput = document.getElementById('phoneInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const resultBox = document.getElementById('resultBox');
+    
+    let isLoading = false;
+    
+    function showResult(message, isError = false, data = null) {
+        resultBox.classList.add('show');
+        resultBox.classList.remove('success', 'error');
+        
+        if (isError) {
+            resultBox.classList.add('error');
+            resultBox.innerHTML = `<strong>❌ 请求失败</strong><br>${message}`;
+        } else {
+            resultBox.classList.add('success');
+            let prettyData = '';
+            if (data && typeof data === 'object') {
+                prettyData = '<br><br><details><summary>📋 服务器响应详情</summary><pre style="margin-top:8px;overflow-x:auto;">' + JSON.stringify(data, null, 2) + '</pre></details>';
+            }
+            resultBox.innerHTML = `<strong>✅ 验证码已发送</strong><br>${message}${prettyData}`;
+        }
+    }
+    
+    async function sendCode() {
+        if (isLoading) return;
+        
+        const phone = phoneInput.value.trim();
+        if (!phone) {
+            showResult('请输入手机号码', true);
+            return;
+        }
+        if (!/^1[3-9]\d{9}$/.test(phone)) {
+            showResult('请输入正确的11位手机号', true);
+            return;
+        }
+        
+        isLoading = true;
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span class="loader"></span> 发送中...';
+        resultBox.classList.remove('show');
+        
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/send-code`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ phone: phone })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                // 根据实际接口返回结构调整成功提示
+                const msg = data.message || data.msg || '验证码已发送至您的手机';
+                showResult(msg, false, data);
+            } else {
+                const errorMsg = data.error || data.message || `请求失败 (${response.status})`;
+                showResult(errorMsg, true, data);
+            }
+        } catch (error) {
+            console.error('请求异常:', error);
+            showResult(`网络错误：${error.message}，请确保后端服务已启动`, true);
+        } finally {
+            isLoading = false;
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = '获取验证码';
+        }
+    }
+    
+    sendBtn.addEventListener('click', sendCode);
+    phoneInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendCode();
+    });
+</script>
+</body>
+</html>
