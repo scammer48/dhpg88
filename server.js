@@ -13,7 +13,7 @@ const API_BASE_URL = 'https://api.itniotech.com';
 const API_KEY = process.env.API_KEY || 'tHdCLW9R3Cgfd8HdNaw3xAeKRJUfH9NQ';
 const API_SECRET = process.env.API_SECRET || 'oDCYdY24XcYHBMRRLAHXf0Fazq4PkjvT';
 
-// MD5 签名函数
+// MD5 签名函数 (按照文档: Api Key + Api Secret + Timestamp)
 function generateSign(timestamp) {
     const stringToSign = API_KEY + API_SECRET + timestamp;
     const md5Hash = crypto.createHash('md5').update(stringToSign).digest('hex');
@@ -22,7 +22,7 @@ function generateSign(timestamp) {
     return md5Hash;
 }
 
-// 发起 HTTPS GET 请求
+// HTTPS GET 请求 (正确携带 Content-Type)
 function httpsGetRequest(url, headers) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -31,13 +31,14 @@ function httpsGetRequest(url, headers) {
             port: 443,
             path: urlObj.pathname + urlObj.search,
             method: 'GET',
-            headers: headers
+            headers: headers  // 包含 Content-Type
         };
         
         const req = https.request(options, (res) => {
             let data = '';
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
+                console.log('[原始响应]', data);
                 try {
                     const jsonData = JSON.parse(data);
                     resolve({ status: res.statusCode, data: jsonData });
@@ -52,12 +53,7 @@ function httpsGetRequest(url, headers) {
     });
 }
 
-// 心跳接口
-app.get('/ping', (req, res) => {
-    res.json({ status: 'alive', timestamp: Date.now() });
-});
-
-// 查询验证码/短信报告接口
+// 查询短信报告接口 (GET 方式)
 app.get('/api/query-report', async (req, res) => {
     console.log('========================================');
     console.log('[请求] 查询参数:', req.query);
@@ -74,8 +70,9 @@ app.get('/api/query-report', async (req, res) => {
     const timestamp = Math.floor(Date.now() / 1000);
     const sign = generateSign(timestamp);
     
+    // 严格按照文档示例设置请求头
     const headers = {
-        'Content-Type': 'application/json;charset=UTF-8',
+        'Content-Type': 'application/json;charset=UTF-8',  // 必须包含
         'Api-Key': API_KEY,
         'Timestamp': String(timestamp),
         'Sign': sign
@@ -92,11 +89,26 @@ app.get('/api/query-report', async (req, res) => {
         console.log('[响应] 状态码:', response.status);
         console.log('[响应] 数据:', response.data);
         
-        // 根据文档：status: "0" 表示成功
+        // 根据文档: status: "0" 表示成功
         if (response.data && response.data.status === '0') {
-            res.json({ success: true, message: '查询成功', data: response.data });
+            res.json({ 
+                success: true, 
+                message: '查询成功', 
+                data: response.data,
+                summary: {
+                    total: (parseInt(response.data.success) || 0) + (parseInt(response.data.fail) || 0),
+                    success: response.data.success,
+                    fail: response.data.fail,
+                    sending: response.data.sending,
+                    nofound: response.data.nofound
+                }
+            });
         } else {
-            res.json({ success: false, message: response.data?.reason || '查询失败', data: response.data });
+            res.json({ 
+                success: false, 
+                message: response.data?.reason || '查询失败', 
+                data: response.data 
+            });
         }
     } catch (error) {
         console.error('[错误]:', error.message);
@@ -104,7 +116,7 @@ app.get('/api/query-report', async (req, res) => {
     }
 });
 
-// POST 方式查询（更方便）
+// POST 方式查询（备用）
 app.post('/api/query-report', async (req, res) => {
     const { appId, msgIds } = req.body;
     
@@ -136,12 +148,17 @@ app.post('/api/query-report', async (req, res) => {
     }
 });
 
+// 心跳接口
+app.get('/ping', (req, res) => {
+    res.json({ status: 'alive', timestamp: Date.now() });
+});
+
 app.get('/', (req, res) => {
     res.json({
         message: '短信报告查询代理服务',
         endpoints: {
             query: 'GET /api/query-report?appId=xxx&msgIds=xxx',
-            queryPost: 'POST /api/query-report (Body: {appId, msgIds})',
+            queryPost: 'POST /api/query-report',
             ping: 'GET /ping'
         }
     });
@@ -149,4 +166,6 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`✅ 服务启动在端口 ${PORT}`);
+    console.log(`📍 地址: http://localhost:${PORT}`);
+    console.log(`🔑 签名方式: MD5(Api-Key + Api-Secret + Timestamp)`);
 });
