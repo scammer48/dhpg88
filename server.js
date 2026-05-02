@@ -16,30 +16,17 @@ const API_BASE_URL = 'https://api.itniotech.com';
 const API_KEY = process.env.API_KEY || 'tHdCLW9R3Cgfd8HdNaw3xAeKRJUfH9NQ';
 const API_SECRET = process.env.API_SECRET || 'oDCYdY24XcYHBMRRLAHXf0Fazq4PkjvT';
 
-// 签名函数
-function generateSign(timestamp, requestBody) {
-    let params = {
-        'Api-Key': API_KEY,
-        'Timestamp': timestamp
-    };
-    
-    for (let key in requestBody) {
-        if (requestBody.hasOwnProperty(key)) {
-            params[key] = requestBody[key];
-        }
-    }
-    
-    const sortedKeys = Object.keys(params).sort();
-    const stringToSign = sortedKeys.map(key => `${key}=${params[key]}`).join('&');
-    
+// ========== 修正签名函数：使用 MD5 ==========
+function generateSign(timestamp) {
+    // 按照文档：MD5(Api Key + Api Secret + Timestamp)
+    const stringToSign = API_KEY + API_SECRET + timestamp;
+    const md5Hash = crypto.createHash('md5').update(stringToSign).digest('hex');
     console.log('[签名调试] 待签名字符串:', stringToSign);
-    
-    const hmac = crypto.createHmac('sha256', API_SECRET);
-    hmac.update(stringToSign);
-    return hmac.digest('hex');
+    console.log('[签名调试] MD5结果:', md5Hash);
+    return md5Hash;
 }
 
-// 手动实现 fetch 功能（兼容所有 Node.js 版本）
+// 手动实现请求功能
 function httpsRequest(url, options, bodyData) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -96,6 +83,7 @@ app.get('/ping', (req, res) => {
 
 // 发送验证码的接口
 app.post('/api/send-code', async (req, res) => {
+    console.log('========================================');
     console.log('[请求] 收到验证码请求:', req.body);
     
     const { phone } = req.body;
@@ -109,14 +97,13 @@ app.post('/api/send-code', async (req, res) => {
         return res.status(400).json({ error: '请输入正确的11位手机号' });
     }
     
+    // 生成时间戳（秒）
     const timestamp = Math.floor(Date.now() / 1000);
-    const requestBody = { mobile: phone };
     
-    // 生成签名
-    const sign = generateSign(timestamp, requestBody);
-    console.log('[签名] 生成的Sign:', sign);
+    // 使用 MD5 生成签名（只包含 Api-Key + Api-Secret + Timestamp）
+    const sign = generateSign(timestamp);
     
-    // 准备请求头
+    // 准备请求头（按照文档要求）
     const headers = {
         'Content-Type': 'application/json;charset=UTF-8',
         'Api-Key': API_KEY,
@@ -124,9 +111,20 @@ app.post('/api/send-code', async (req, res) => {
         'Sign': sign
     };
     
-    // 实际接口路径（根据文档可能需要调整）
-    const apiPath = '/api/v1/sms/sendCode';
+    // ⚠️ 重要：需要确认正确的验证码发送接口路径
+    // 根据文档，可能路径是根路径 '/' 或 '/sendCode' 等
+    // 这里提供几个常见可能性，请根据实际情况调整
+    const apiPath = '/';  // 尝试根路径，如果不行请修改
+    // const apiPath = '/sendCode';
+    // const apiPath = '/api/sendCode';
+    // const apiPath = '/sms/send';
+    
     const fullUrl = `${API_BASE_URL}${apiPath}`;
+    
+    // 构造请求体（根据文档，需要发送手机号）
+    const requestBody = {
+        mobile: phone  // 也可能是 phone 或 mobileNumber
+    };
     
     console.log('[请求] 目标URL:', fullUrl);
     console.log('[请求] Headers:', JSON.stringify(headers, null, 2));
@@ -142,11 +140,19 @@ app.post('/api/send-code', async (req, res) => {
         console.log('[响应] 状态码:', response.status);
         console.log('[响应] 数据:', response.data);
         
-        // 返回结果给前端
-        if (response.status === 200 || response.status === 201) {
-            res.status(200).json(response.data);
+        // 检查业务状态码（文档说 status: "0" 表示成功）
+        if (response.data && response.data.status === '0') {
+            res.status(200).json({ 
+                success: true, 
+                message: response.data.reason || '验证码发送成功',
+                data: response.data 
+            });
         } else {
-            res.status(response.status).json(response.data);
+            res.status(200).json({ 
+                success: false, 
+                message: response.data?.reason || '验证码发送失败',
+                data: response.data 
+            });
         }
         
     } catch (error) {
@@ -185,4 +191,5 @@ app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`📍 本地地址: http://localhost:${PORT}`);
     console.log(`🔧 环境: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📝 签名方式: MD5(Api-Key + Api-Secret + Timestamp)`);
 });
