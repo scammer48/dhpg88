@@ -2,108 +2,78 @@ const express = require('express');
 const crypto = require('crypto');
 const cors = require('cors');
 const https = require('https');
-const http = require('http');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 中间件
 app.use(cors());
 app.use(express.json());
 
-// 从环境变量读取敏感信息
 const API_BASE_URL = 'https://api.itniotech.com';
 const API_KEY = process.env.API_KEY || 'tHdCLW9R3Cgfd8HdNaw3xAeKRJUfH9NQ';
 const API_SECRET = process.env.API_SECRET || 'oDCYdY24XcYHBMRRLAHXf0Fazq4PkjvT';
 
-// ========== 修正签名函数：使用 MD5 ==========
+// MD5 签名函数
 function generateSign(timestamp) {
-    // 按照文档：MD5(Api Key + Api Secret + Timestamp)
     const stringToSign = API_KEY + API_SECRET + timestamp;
     const md5Hash = crypto.createHash('md5').update(stringToSign).digest('hex');
-    console.log('[签名调试] 待签名字符串:', stringToSign);
-    console.log('[签名调试] MD5结果:', md5Hash);
+    console.log('[签名] 待签字符串:', stringToSign);
+    console.log('[签名] MD5结果:', md5Hash);
     return md5Hash;
 }
 
-// 手动实现请求功能
-function httpsRequest(url, options, bodyData) {
+// 发起 HTTPS GET 请求
+function httpsGetRequest(url, headers) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
-        const isHttps = urlObj.protocol === 'https:';
-        const requestModule = isHttps ? https : http;
-        
-        const requestOptions = {
+        const options = {
             hostname: urlObj.hostname,
-            port: urlObj.port || (isHttps ? 443 : 80),
+            port: 443,
             path: urlObj.pathname + urlObj.search,
-            method: options.method || 'POST',
-            headers: options.headers || {}
+            method: 'GET',
+            headers: headers
         };
         
-        const req = requestModule.request(requestOptions, (res) => {
+        const req = https.request(options, (res) => {
             let data = '';
-            res.on('data', (chunk) => {
-                data += chunk;
-            });
+            res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
-                let jsonData = null;
                 try {
-                    jsonData = JSON.parse(data);
+                    const jsonData = JSON.parse(data);
+                    resolve({ status: res.statusCode, data: jsonData });
                 } catch (e) {
-                    jsonData = data;
+                    resolve({ status: res.statusCode, data: data });
                 }
-                resolve({
-                    status: res.statusCode,
-                    json: () => Promise.resolve(jsonData),
-                    data: jsonData
-                });
             });
         });
         
-        req.on('error', (error) => {
-            reject(error);
-        });
-        
-        if (bodyData) {
-            req.write(bodyData);
-        }
+        req.on('error', (error) => reject(error));
         req.end();
     });
 }
 
 // 心跳接口
 app.get('/ping', (req, res) => {
-    res.json({ 
-        status: 'alive', 
-        timestamp: Date.now(),
-        uptime: process.uptime()
-    });
+    res.json({ status: 'alive', timestamp: Date.now() });
 });
 
-// 发送验证码的接口
-app.post('/api/send-code', async (req, res) => {
+// 查询验证码/短信报告接口
+app.get('/api/query-report', async (req, res) => {
     console.log('========================================');
-    console.log('[请求] 收到验证码请求:', req.body);
+    console.log('[请求] 查询参数:', req.query);
     
-    const { phone } = req.body;
+    const { appId, msgIds } = req.query;
     
-    // 校验手机号
-    if (!phone) {
-        return res.status(400).json({ error: '请输入手机号' });
+    if (!appId) {
+        return res.status(400).json({ error: '请输入 appId' });
+    }
+    if (!msgIds) {
+        return res.status(400).json({ error: '请输入 msgIds' });
     }
     
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-        return res.status(400).json({ error: '请输入正确的11位手机号' });
-    }
-    
-    // 生成时间戳（秒）
     const timestamp = Math.floor(Date.now() / 1000);
-    
-    // 使用 MD5 生成签名（只包含 Api-Key + Api-Secret + Timestamp）
     const sign = generateSign(timestamp);
     
-    // 准备请求头（按照文档要求）
     const headers = {
         'Content-Type': 'application/json;charset=UTF-8',
         'Api-Key': API_KEY,
@@ -111,85 +81,72 @@ app.post('/api/send-code', async (req, res) => {
         'Sign': sign
     };
     
-    // ⚠️ 重要：需要确认正确的验证码发送接口路径
-    // 根据文档，可能路径是根路径 '/' 或 '/sendCode' 等
-    // 这里提供几个常见可能性，请根据实际情况调整
-    const apiPath = '/';  // 尝试根路径，如果不行请修改
-    // const apiPath = '/sendCode';
-    // const apiPath = '/api/sendCode';
-    // const apiPath = '/sms/send';
-    
-    const fullUrl = `${API_BASE_URL}${apiPath}`;
-    
-    // 构造请求体（根据文档，需要发送手机号）
-    const requestBody = {
-        mobile: phone  // 也可能是 phone 或 mobileNumber
-    };
+    // 构建完整 URL
+    const fullUrl = `${API_BASE_URL}/sms/getReport?appId=${encodeURIComponent(appId)}&msgIds=${encodeURIComponent(msgIds)}`;
     
     console.log('[请求] 目标URL:', fullUrl);
     console.log('[请求] Headers:', JSON.stringify(headers, null, 2));
-    console.log('[请求] Body:', JSON.stringify(requestBody));
     
     try {
-        // 发送请求到真实 API
-        const response = await httpsRequest(fullUrl, {
-            method: 'POST',
-            headers: headers
-        }, JSON.stringify(requestBody));
-        
+        const response = await httpsGetRequest(fullUrl, headers);
         console.log('[响应] 状态码:', response.status);
         console.log('[响应] 数据:', response.data);
         
-        // 检查业务状态码（文档说 status: "0" 表示成功）
+        // 根据文档：status: "0" 表示成功
         if (response.data && response.data.status === '0') {
-            res.status(200).json({ 
-                success: true, 
-                message: response.data.reason || '验证码发送成功',
-                data: response.data 
-            });
+            res.json({ success: true, message: '查询成功', data: response.data });
         } else {
-            res.status(200).json({ 
-                success: false, 
-                message: response.data?.reason || '验证码发送失败',
-                data: response.data 
-            });
+            res.json({ success: false, message: response.data?.reason || '查询失败', data: response.data });
         }
-        
     } catch (error) {
-        console.error('[错误] 请求失败:', error.message);
-        res.status(500).json({ 
-            error: '服务端请求失败', 
-            message: error.message,
-            hint: '请检查 API 接口地址是否正确，或网络是否可达'
-        });
+        console.error('[错误]:', error.message);
+        res.status(500).json({ error: '请求失败', message: error.message });
     }
 });
 
-// 健康检查接口
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'ok', 
-        timestamp: Date.now(),
-        uptime: process.uptime()
-    });
+// POST 方式查询（更方便）
+app.post('/api/query-report', async (req, res) => {
+    const { appId, msgIds } = req.body;
+    
+    if (!appId || !msgIds) {
+        return res.status(400).json({ error: '请提供 appId 和 msgIds' });
+    }
+    
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = generateSign(timestamp);
+    
+    const headers = {
+        'Content-Type': 'application/json;charset=UTF-8',
+        'Api-Key': API_KEY,
+        'Timestamp': String(timestamp),
+        'Sign': sign
+    };
+    
+    const fullUrl = `${API_BASE_URL}/sms/getReport?appId=${encodeURIComponent(appId)}&msgIds=${encodeURIComponent(msgIds)}`;
+    
+    try {
+        const response = await httpsGetRequest(fullUrl, headers);
+        if (response.data && response.data.status === '0') {
+            res.json({ success: true, data: response.data });
+        } else {
+            res.json({ success: false, message: response.data?.reason, data: response.data });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// 根路径
 app.get('/', (req, res) => {
     res.json({
-        message: '验证码代理服务运行中',
+        message: '短信报告查询代理服务',
         endpoints: {
-            sendCode: 'POST /api/send-code',
-            ping: 'GET /ping',
-            health: 'GET /health'
+            query: 'GET /api/query-report?appId=xxx&msgIds=xxx',
+            queryPost: 'POST /api/query-report (Body: {appId, msgIds})',
+            ping: 'GET /ping'
         }
     });
 });
 
-// 启动服务器
 app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-    console.log(`📍 本地地址: http://localhost:${PORT}`);
-    console.log(`🔧 环境: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`📝 签名方式: MD5(Api-Key + Api-Secret + Timestamp)`);
+    console.log(`✅ 服务启动在端口 ${PORT}`);
 });
